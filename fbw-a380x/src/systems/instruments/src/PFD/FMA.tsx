@@ -12,6 +12,7 @@ import {
   VNode,
 } from '@microsoft/msfs-sdk';
 import { ArmedLateralMode, isArmed, LateralMode, VerticalMode } from '@shared/autopilot';
+import { FmgcFlightPhase } from '@shared/flightphase';
 import { Arinc429Values } from './shared/ArincValueProvider';
 import { PFDSimvars } from './shared/PFDSimvarPublisher';
 import { Arinc429Word } from '@flybywiresim/fbw-sdk';
@@ -81,6 +82,20 @@ export class FMA extends DisplayComponent<{ bus: EventBus; isAttExcessive: Subsc
 
   private readonly ap2Active = ConsumerSubject.create(this.sub.on('ap2Active'), false);
 
+  private readonly fd1Active = ConsumerSubject.create(this.sub.on('fd1Active'), false);
+
+  private readonly fd2Active = ConsumerSubject.create(this.sub.on('fd2Active'), false);
+
+  private readonly tla1 = ConsumerSubject.create(this.sub.on('tla1'), 0);
+
+  private readonly tla2 = ConsumerSubject.create(this.sub.on('tla2'), 0);
+
+  private readonly tla3 = ConsumerSubject.create(this.sub.on('tla3'), 0);
+
+  private readonly tla4 = ConsumerSubject.create(this.sub.on('tla4'), 0);
+
+  private readonly fmgcFlightPhase = ConsumerSubject.create(this.sub.on('fmgcFlightPhase'), 0);
+
   private readonly activeVerticalMode = ConsumerSubject.create(this.sub.on('activeVerticalMode'), 0);
 
   private readonly selectedVerticalSpeed = ConsumerSubject.create(this.sub.on('apVsSelected'), null);
@@ -88,6 +103,10 @@ export class FMA extends DisplayComponent<{ bus: EventBus; isAttExcessive: Subsc
   private readonly selectedFpa = ConsumerSubject.create(this.sub.on('selectedFpa'), null);
 
   private readonly approachCapability = ConsumerSubject.create(this.sub.on('approachCapability'), 0);
+
+  private readonly slatFlapStatus = ConsumerSubject.create(this.sub.on('slatsFlapsStatus'), Arinc429Word.empty());
+
+  private readonly slatFlapPosition = ConsumerSubject.create(this.sub.on('slatsPosition'), Arinc429Word.empty());
 
   private disconnectApForLdg = MappedSubject.create(
     ([ap1, ap2, ra, altitude, landingElevation, verticalMode, selectedFpa, selectedVs, approachCapability]) => {
@@ -115,6 +134,30 @@ export class FMA extends DisplayComponent<{ bus: EventBus; isAttExcessive: Subsc
     this.approachCapability,
   );
 
+  private readonly forGaSetToga = MappedSubject.create(
+    ([ap1, ap2, fd1, fd2, ra, tla1, tla2, tla3, tla4, fmgcFlightPhase, slatFlapStatus, slatFlapPosition]) => {
+      return (
+        (ap1 || ap2 || fd1 || fd2) &&
+        ra.value < 1000 &&
+        (tla1 === 35 || tla2 === 35 || tla3 === 35 || tla4 === 35) &&
+        fmgcFlightPhase === FmgcFlightPhase.Approach &&
+        !(slatFlapStatus.bitValue(17) || slatFlapPosition.bitValue(12) || !slatFlapPosition.bitValue(19))
+      );
+    },
+    this.ap1Active,
+    this.ap2Active,
+    this.fd1Active,
+    this.fd2Active,
+    this.radioHeight,
+    this.tla1,
+    this.tla2,
+    this.tla3,
+    this.tla4,
+    this.fmgcFlightPhase,
+    this.slatFlapStatus,
+    this.slatFlapPosition,
+  );
+
   private handleFMABorders() {
     const sharedModeActive =
       this.activeLateralMode === 32 ||
@@ -130,6 +173,7 @@ export class FMA extends DisplayComponent<{ bus: EventBus; isAttExcessive: Subsc
         this.tcasRaInhibited.get(),
         this.tdReached,
         this.disconnectApForLdg.get(),
+        this.forGaSetToga.get(),
       )[0] !== null;
 
     const engineMessage = this.athrModeMessage;
@@ -165,6 +209,10 @@ export class FMA extends DisplayComponent<{ bus: EventBus; isAttExcessive: Subsc
     this.disconnectApForLdg.sub(() => this.handleFMABorders());
 
     this.props.isAttExcessive.sub((_a) => {
+      this.handleFMABorders();
+    });
+
+    this.forGaSetToga.sub(() => {
       this.handleFMABorders();
     });
 
@@ -235,6 +283,7 @@ export class FMA extends DisplayComponent<{ bus: EventBus; isAttExcessive: Subsc
           bus={this.props.bus}
           isAttExcessive={this.props.isAttExcessive}
           disconnectApForLdg={this.disconnectApForLdg}
+          forGaSetToga={this.forGaSetToga}
           AB3Message={this.AB3Message}
         />
       </g>
@@ -395,6 +444,7 @@ class Row3 extends DisplayComponent<{
   bus: EventBus;
   isAttExcessive: Subscribable<boolean>;
   disconnectApForLdg: Subscribable<boolean>;
+  forGaSetToga: Subscribable<boolean>;
   AB3Message: Subscribable<boolean>;
 }> {
   private cellsToHide = FSComponent.createRef<SVGGElement>();
@@ -422,6 +472,7 @@ class Row3 extends DisplayComponent<{
         <BC3Cell
           isAttExcessive={this.props.isAttExcessive}
           disconnectApForLdg={this.props.disconnectApForLdg}
+          forGaSetToga={this.props.forGaSetToga}
           bus={this.props.bus}
         />
         <E3Cell bus={this.props.bus} />
@@ -1351,6 +1402,7 @@ const getBC3Message = (
   tcasRaInhibited: boolean,
   tdReached: boolean,
   disconnectApForLdg: boolean,
+  forGaSetToga: boolean,
 ) => {
   const armedVerticalBitmask = armedVerticalMode;
   const TCASArmed = (armedVerticalBitmask >> 6) & 1;
@@ -1362,7 +1414,7 @@ const getBC3Message = (
   if (false) {
     text = 'USE MAN PITCH TRIM';
     className = 'PulseAmber9Seconds Amber';
-  } else if (false) {
+  } else if (forGaSetToga) {
     text = 'FOR GA: SET TOGA';
     className = 'PulseAmber9Seconds Amber';
   } else if (disconnectApForLdg) {
@@ -1405,6 +1457,7 @@ const getBC3Message = (
 class BC3Cell extends DisplayComponent<{
   isAttExcessive: Subscribable<boolean>;
   disconnectApForLdg: Subscribable<boolean>;
+  forGaSetToga: Subscribable<boolean>;
   bus: EventBus;
 }> {
   private sub = this.props.bus.getSubscriber<PFDSimvars & Arinc429Values>();
@@ -1434,6 +1487,7 @@ class BC3Cell extends DisplayComponent<{
       this.tcasRaInhibited,
       this.tdReached,
       this.props.disconnectApForLdg.get(),
+      this.props.forGaSetToga.get(),
     );
     this.classNameSub.set(`FontMedium MiddleAlign ${className}`);
     if (text !== null) {
@@ -1452,6 +1506,10 @@ class BC3Cell extends DisplayComponent<{
     });
 
     this.props.disconnectApForLdg.sub(() => {
+      this.fillBC3Cell();
+    });
+
+    this.props.forGaSetToga.sub(() => {
       this.fillBC3Cell();
     });
 
