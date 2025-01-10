@@ -141,7 +141,7 @@ export class FMA extends DisplayComponent<{ bus: EventBus; isAttExcessive: Subsc
         ra.value < 1000 &&
         (tla1 === 35 || tla2 === 35 || tla3 === 35 || tla4 === 35) &&
         fmgcFlightPhase === FmgcFlightPhase.Approach &&
-        !(slatFlapStatus.bitValue(17) || slatFlapPosition.bitValue(12) || !slatFlapPosition.bitValue(19))
+        !(slatFlapStatus.bitValue(17) || slatFlapPosition.bitValue(12) || slatFlapPosition.bitValue(19))
       );
     },
     this.ap1Active,
